@@ -24,7 +24,7 @@ MAIN	= $(DIR)/main
 MAT	= $(DIR)/mat
 MLIB	= $(DIR)/mlib
 NODE	= $(DIR)/node
-OBJ	= $(DIR)/obj
+OBJ	= $(DIR)/obj$(if $(filter 1,$(USE_PETSC)),-petsc,)
 SEC	= $(DIR)/sec
 SHP	= $(DIR)/shp
 SPRING  = $(DIR)/spring
@@ -52,7 +52,24 @@ INCLUDE	= -I$(CTRL) -I$(ELC) -I$(GEOM) -I$(LOAD) -I$(MAIN) -I$(MAT) -I$(MLIB) \
           -I$(NODE) -I$(SHP) -I$(SEC) -I$(SPRING) -I$(HEAT)
 CFLAGS	= $(INCLUDE) $(POLICE) $(DEBUG) $(OPTMIZ) $(DEFINE)
 #CFLAGS = -fopenmp $(INCLUDE) $(POLICE) $(DEBUG) $(OPTMIZ) $(DEFINE)
-SYSLIBS	= -lm 
+SYSLIBS	= -lm
+
+# Optional PETSc KSP/PC backend; native solvers remain the default.
+# PETSC_CFLAGS/PETSC_LIBS can be supplied for installations without pkg-config.
+ifeq ($(USE_PETSC),1)
+PETSC_CFLAGS ?= $(shell pkg-config --cflags PETSc 2>/dev/null)
+PETSC_LIBS ?= $(shell pkg-config --libs PETSc 2>/dev/null)
+PETSC_LIBDIR ?= $(shell pkg-config --variable=libdir PETSc 2>/dev/null)
+ifeq ($(strip $(PETSC_LIBS)),)
+$(error PETSc not found: set PKG_CONFIG_PATH or PETSC_CFLAGS and PETSC_LIBS)
+endif
+CFLAGS += -DFAST_WITH_PETSC $(PETSC_CFLAGS)
+SYSLIBS += $(PETSC_LIBS)
+ifneq ($(strip $(PETSC_LIBDIR)),)
+SYSLIBS += -Wl,-rpath,$(PETSC_LIBDIR)
+endif
+endif
+
 
 # Aplication modules
 
@@ -116,6 +133,7 @@ MATMOD	=		\
 	material
 
 MLIBMOD	=		\
+	linsolver	\
 	mat		\
 	matvec		\
 	sysmat		\
@@ -172,7 +190,10 @@ OBJS	= $(CTRLMOD:%=$(OBJ)/%.o)	\
 FIRST: $(DIRS)
 	$(MAKE) $(DIR)/fast
 
-$(DIR)/fast     : $(DIRS) $(OBJS) 
+$(OBJ):
+	mkdir -p $@
+
+$(DIR)/fast     : $(DIRS) $(OBJS) FORCE
 		$(CC) -o $@ $(OBJS) $(SYSLIBS)
 #		$(CC) -fopenmp -o $@ $(OBJS) $(SYSLIBS)
 #                 $(CC) -o $@ $(OBJS) -static -pg $(SYSLIBS)
@@ -250,6 +271,25 @@ depend:	FORCE
 	@echo "Generation completed."
 
 FORCE:
+
+# Existing model regressions and matrix-level solver contracts.
+TESTOBJS = $(addprefix $(OBJ)/,linsolver.o sysmat.o vec.o mat.o matvec.o)
+$(OBJ)/linear-solver-test: $(DIR)/tests/linear_solver.cpp $(TESTOBJS) $(DIR)/makefile
+	$(CC) $(CFLAGS) -o $@ $< $(TESTOBJS) $(SYSLIBS)
+
+.PHONY: test
+test: $(DIR)/fast $(OBJ)/linear-solver-test
+	$(OBJ)/linear-solver-test native
+	python3 $(DIR)/tests/solvers.py $(DIR)/fast $(if $(filter 1,$(USE_PETSC)),--petsc,)
+ifeq ($(USE_PETSC),1)
+	$(OBJ)/linear-solver-test petsc -ksp_type gmres -pc_type ilu
+	$(OBJ)/linear-solver-test petsc-spd -ksp_type cg -pc_type jacobi
+	$(OBJ)/linear-solver-test petsc -ksp_type preonly -pc_type lu
+endif
+
+# Track header changes for both build variants.
+$(OBJS): $(wildcard $(CTRL)/*.h $(ELC)/*.h $(GEOM)/*.h $(LOAD)/*.h $(MAIN)/*.h $(MAT)/*.h $(MLIB)/*.h $(NODE)/*.h $(SEC)/*.h $(SHP)/*.h $(SPRING)/*.h $(HEAT)/*.h)
+$(OBJS): | $(OBJ)
 
 # dependencies
 

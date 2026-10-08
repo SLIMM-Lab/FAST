@@ -15,10 +15,12 @@
 #include <iomanip>
 #include <string.h>
 #include <time.h>
+#include <stdexcept>
 
 using namespace std;
 
 #include "sysmat.h"
+#include "linsolver.h"
 #include "vec.h"
 
 #ifdef _OMP_
@@ -264,6 +266,13 @@ void cSymSkylMatrix :: Zero(void)
 
 int cSymSkylMatrix :: Solve(cVector &b, cVector &x)
 {
+  if (LinearSolver::UsesPetsc())
+    return LinearSolver::Solve(*this, b, x, maxit, tol);
+  return SolveNative(b, x);
+}
+
+int cSymSkylMatrix::SolveNative(cVector &b, cVector &x)
+{
   x = b;
   if (!dec)
   {
@@ -320,6 +329,25 @@ int cSymSkylMatrix :: GetLgtPvt(void)
 
 int cSymSkylMatrix :: GetNgtPvt(void)
 {
+  if (LinearSolver::UsesPetsc())
+  {
+    // Stability controllers require Crout pivots, not the original diagonal.
+    // Factor a copy so PETSc continues to receive the assembled matrix.
+    cSymSkylMatrix copy(dim, skl);
+    for (int i = 0; i < dim; ++i)
+      for (int j = skl[i]; j <= i; ++j)
+      {
+        copy.val[i][j] = val[i][j];
+      }
+    cVector zero(dim);
+    zero.Zero();
+    if (!copy.SolveNative(zero, zero))
+      throw std::runtime_error("Native pivot diagnostic failed");
+    int count = 0;
+    for (int i = 0; i < dim; ++i)
+      if (copy.val[i][i] < 0.0) ++count;
+    return count;
+  }
  int nnp = 0;
 
  for (int i = 0; i < dim; i++)
@@ -497,6 +525,13 @@ void cUnsymSkylMatrix :: Zero(void)
 
 int cUnsymSkylMatrix :: Solve(cVector &b, cVector &x)
 {
+  if (LinearSolver::UsesPetsc())
+    return LinearSolver::Solve(*this, b, x, maxit, tol);
+  return SolveNative(b, x);
+}
+
+int cUnsymSkylMatrix::SolveNative(cVector &b, cVector &x)
+{
   x = b;
 
   // Perform the Crout's factorization [A] = [L][U], where Uii = 1.
@@ -593,6 +628,26 @@ int cUnsymSkylMatrix :: GetLgtPvt(void)
 
 int cUnsymSkylMatrix :: GetNgtPvt(void)
 {
+  if (LinearSolver::UsesPetsc())
+  {
+    // Stability controllers require Crout pivots, not the original diagonal.
+    // Factor a copy so PETSc continues to receive the assembled matrix.
+    cUnsymSkylMatrix copy(dim, skl);
+    for (int i = 0; i < dim; ++i)
+      for (int j = skl[i]; j <= i; ++j)
+      {
+        copy.L[i][j] = L[i][j];
+        if (i != j) copy.U[i][j] = U[i][j];
+      }
+    cVector zero(dim);
+    zero.Zero();
+    if (!copy.SolveNative(zero, zero))
+      throw std::runtime_error("Native pivot diagnostic failed");
+    int count = 0;
+    for (int i = 0; i < dim; ++i)
+      if (copy.L[i][i] < 0.0) ++count;
+    return count;
+  }
   int nnp = 0;
 
   for (int i = 0; i < dim; i++) if (L[i][i] < 0.0) nnp++;
@@ -766,6 +821,13 @@ void cSprsMatrix :: Add(int i, int j, double v)
 
 // ================================== Get ==================================
 
+void cSprsMatrix::Zero(void)
+{
+  for (int i = 0; i < dim; ++i)
+    for (SpElm *entry = row[i]; entry; entry = entry->nxt)
+      entry->val = 0.0;
+}
+
 double cSprsMatrix :: Get(int i, int j)
 {
   for (SpElm *e = row[i]; e != 0; e = e->nxt)
@@ -877,6 +939,9 @@ void cSprsMatrix :: GetRow(int i, cVector &v)
 
 int cSprsMatrix :: Solve(cVector &b, cVector &x)
 {
+  if (LinearSolver::UsesPetsc())
+    return LinearSolver::Solve(*this, b, x, maxit, tol);
+
   return(PCGSolver(maxit, tol, this, b, x));
 }
 
@@ -966,6 +1031,9 @@ void cSymSprsMatrix :: MultVect(double *u, double *v)
 
 int cSymSprsMatrix :: Solve(cVector &b, cVector &x)
 {
+  if (LinearSolver::UsesPetsc())
+    return LinearSolver::Solve(*this, b, x, maxit, tol);
+
   return(PCGSolver(maxit, tol, this, b, x));
 }
 
@@ -997,6 +1065,9 @@ typedef Eigen :: BiCGSTAB<EigenSpMat>                          BiConjGrad;
 
 int cSprsMatEigen :: Solve(cVector &b, cVector &x)
 {
+  if (LinearSolver::UsesPetsc())
+    return LinearSolver::Solve(*this, b, x, maxit, tol);
+
   // Auxiliary data.
   EigenVec v(dim);         // Eigen input vector.
   EigenVec w(dim);         // Eigen output vector.
@@ -1061,11 +1132,19 @@ int cSprsMatEigen :: Solve(cVector &b, cVector &x)
 int PCGSolver(int maxiter, double tol, cSysMatrix *K, cVector &f,
               cVector &u)
 {
+  // MPC callers may pass the same vector as RHS and solution.
+  if (&f == &u)
+  {
+    cVector rhs(f.Dim());
+    rhs = f;
+    return PCGSolver(maxiter, tol, K, rhs, u);
+  }
+
   // Check the given data
 
   double lenf = f.Length( );
   cout << "lenf = " << showpos << scientific << lenf <<"\n";
-  if (lenf < tol) return(1);
+  if (lenf < tol) { u.Zero(); return(1); }
   if (lenf > 10e+10) lenf = 1.0;           // temporario
 //  if (lenf > pow(10.0, log10(BIGK)/2.0)) lenf = 1.0;
 
@@ -1170,3 +1249,38 @@ int FstEigPair(int maxit,double tol, cSysMatrix *K, double *lbd, cVector &v)
 }
 
 // ======================================================= End of file =====
+
+// Export stored entries in O(number of stored entries), without a dense copy.
+void cSymSkylMatrix::VisitEntries(const std::function<void(int, int, double)> &visit)
+{
+  for (int i = 0; i < dim; ++i)
+    for (int j = skl[i]; j <= i; ++j)
+    {
+      visit(i, j, val[i][j]);
+      if (i != j) visit(j, i, val[i][j]);
+    }
+}
+
+void cUnsymSkylMatrix::VisitEntries(const std::function<void(int, int, double)> &visit)
+{
+  for (int i = 0; i < dim; ++i)
+  {
+    visit(i, i, L[i][i]);
+    for (int j = skl[i]; j < i; ++j)
+    {
+      visit(i, j, L[i][j]);
+      visit(j, i, U[i][j]);
+    }
+  }
+}
+
+void cSprsMatrix::VisitEntries(const std::function<void(int, int, double)> &visit)
+{
+  for (int i = 0; i < dim; ++i)
+    for (SpElm *entry = row[i]; entry; entry = entry->nxt)
+    {
+      visit(i, entry->col, entry->val);
+      if (Symmetric() && i != entry->col)
+        visit(entry->col, i, entry->val);
+    }
+}

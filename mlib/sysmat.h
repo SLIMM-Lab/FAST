@@ -35,6 +35,8 @@
 #ifndef _SYSMAT_H
 #define _SYSMAT_H
 
+#include <functional>
+
 // -------------------------------------------------------------------------
 // SysMat types:
 //
@@ -95,6 +97,8 @@ class cSysMatrix
   virtual void     Add       (int, int, double) = 0;
   virtual void     Print     (void) = 0;
   virtual void     MultVect  (double *, double *) = 0;
+  // Visit the full, unfactorized matrix, including both symmetric halves.
+  virtual void     VisitEntries(const std::function<void(int, int, double)> &) = 0;
   virtual void     AddMat    (double, cSysMatrix *) { }
 };
 
@@ -104,11 +108,13 @@ class cSysMatrix
 class cSymSkylMatrix : public cSysMatrix
 {
  protected:
+  int SolveNative(cVector &, cVector &);
   int    dec;     // Decomposition flag
   int    *skl;    // Matrix skyline
   double **val;   // Stored values
 
  public:
+  void VisitEntries(const std::function<void(int, int, double)> &);
            cSymSkylMatrix(int, int *);
           ~cSymSkylMatrix(void);
   double&  operator()    (int i, int j) { return val[i][j]; }
@@ -132,12 +138,14 @@ class cSymSkylMatrix : public cSysMatrix
 class cUnsymSkylMatrix : public cSysMatrix
 {
  protected:
+  int SolveNative(cVector &, cVector &);
   int    dec;     // Decomposition flag
   int    *skl;    // Matrix skyline
   double **L;     // Lower matrix
   double **U;     // Upper matrix
 
  public:
+  void VisitEntries(const std::function<void(int, int, double)> &);
            cUnsymSkylMatrix(int, int *);
           ~cUnsymSkylMatrix(void);
   void     Zero          (void);
@@ -175,8 +183,10 @@ class cSprsMatrix : public cSysMatrix
   int *nc;
 
  public:
+  void VisitEntries(const std::function<void(int, int, double)> &);
                   cSprsMatrix(int n = 1);
   virtual        ~cSprsMatrix(void);
+  virtual void    Zero       (void);
   virtual int     Solve      (cVector &, cVector &);
   virtual double  Get        (int, int);
   virtual void    Add        (int, int, double);

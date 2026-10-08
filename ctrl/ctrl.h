@@ -386,6 +386,9 @@ class cControl
  public:
   static  void      ReadAlg(void);
   static  void      ReadMatrixType(void);
+  static  void      ReadLinearSolver(void);
+  static  void      ReadPetscOptions(void);
+  static  void      ReadPetscOptionsFile(void);
   static  void      ReadMaxStep(void);
   static  void      ReadMaxIter(void);
   static  void      ReadTargetIter(void);
