@@ -83,6 +83,7 @@ using namespace std;
 #include "mat.h"
 #include "patch.h"
 #include "sysmat.h"
+#include "linsolver.h"
 #include "matvec.h"
 #include "eig.h"
 #include "utl.h"
@@ -236,6 +237,10 @@ void cControl :: ReadMatrixType(void)
   else  //default
     SysMatType = SYM_SKYLINE;
 }
+
+void cControl::ReadLinearSolver() { LinearSolver::ReadBackend(in); }
+void cControl::ReadPetscOptions() { LinearSolver::ReadOptions(in); }
+void cControl::ReadPetscOptionsFile() { LinearSolver::ReadOptionsFile(in); }
 
 // ============================== ReadMaxStep ==============================
 

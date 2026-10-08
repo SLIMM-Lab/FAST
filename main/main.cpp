@@ -23,6 +23,8 @@
 using namespace std;
 
 #include "input.h"
+#include "linsolver.h"
+#include <exception>
 #include "ctrl.h"
 #include "utl.h"
 #include "gbldef.h"
@@ -44,7 +46,7 @@ bool Printing = false;
 // -------------------------------------------------------------------------
 // main function:
 //
-int main(int argc, char **argv)
+int RunFAST(int argc, char **argv)
 {
   // Disable syncronization between ios and stdio to increase performance.
 
@@ -56,7 +58,8 @@ int main(int argc, char **argv)
 
   // Get program options (feedback).
 
-  if (argc > 2 && string(argv[2]) == "-silent") Feedback = false;
+  for (int i = 2; i < argc; ++i)
+    if (string(argv[i]) == "-silent") Feedback = false;
 
   if (Feedback)
   {
@@ -117,6 +120,7 @@ int main(int argc, char **argv)
   if (Feedback)
     cout << "\n\tReading the input data .................." << endl;
   InpReadData( );
+  LinearSolver::Initialize(fname);
   InpCopyData( );
   in.close( );
 
@@ -155,3 +159,17 @@ int main(int argc, char **argv)
 }
 	 
 // ======================================================= End of file =====
+
+int main(int argc, char **argv)
+{
+  try
+  {
+    LinearSolver::Runtime runtime(argc, argv);
+    return RunFAST(argc, argv);
+  }
+  catch (const std::exception &error)
+  {
+    cerr << "FAST: " << error.what() << endl;
+    return 1;
+  }
+}
